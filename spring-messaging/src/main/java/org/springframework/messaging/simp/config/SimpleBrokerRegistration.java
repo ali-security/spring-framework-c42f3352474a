@@ -33,6 +33,8 @@ public class SimpleBrokerRegistration extends AbstractBrokerRegistration {
 
 	private long[] heartbeat;
 
+	private String selectorHeaderName = "selector";
+
 
 	public SimpleBrokerRegistration(SubscribableChannel inChannel, MessageChannel outChannel, String[] prefixes) {
 		super(inChannel, outChannel, prefixes);
@@ -65,6 +67,23 @@ public class SimpleBrokerRegistration extends AbstractBrokerRegistration {
 		return this;
 	}
 
+	/**
+	 * Configure the name of a header that a subscription message can have for
+	 * the purpose of filtering messages matched to the subscription. The header
+	 * value is expected to be a Spring EL boolean expression to be applied to
+	 * the headers of messages matched to the subscription.
+	 * <p>For example:
+	 * <pre>
+	 * headers.foo == 'bar'
+	 * </pre>
+	 * <p>By default this is set to "selector". You can set it to a different
+	 * name, or to {@code null} to turn off support for a selector header.
+	 * @param selectorHeaderName the name to use for a selector header
+	 */
+	public void setSelectorHeaderName(String selectorHeaderName) {
+		this.selectorHeaderName = selectorHeaderName;
+	}
+
 
 	@Override
 	protected SimpleBrokerMessageHandler getMessageHandler(SubscribableChannel brokerChannel) {
@@ -76,6 +95,7 @@ public class SimpleBrokerRegistration extends AbstractBrokerRegistration {
 		if (this.heartbeat != null) {
 			handler.setHeartbeatValue(this.heartbeat);
 		}
+		handler.setSelectorHeaderName(this.selectorHeaderName);
 		return handler;
 	}
 

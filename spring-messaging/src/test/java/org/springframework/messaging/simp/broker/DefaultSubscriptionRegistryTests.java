@@ -268,6 +268,8 @@ public class DefaultSubscriptionRegistryTests {
 		String destination = "/foo";
 		String selector = "headers.foo == 'bar'";
 
+		// First, try with selector header
+
 		this.registry.registerSubscription(subscribeMessage(sessionId, subscriptionId, destination, selector));
 
 		SimpMessageHeaderAccessor accessor = SimpMessageHeaderAccessor.create();
@@ -280,9 +282,32 @@ public class DefaultSubscriptionRegistryTests {
 		assertEquals(1, actual.size());
 		assertEquals(Collections.singletonList(subscriptionId), actual.get(sessionId));
 
+		// Then without
+
 		actual = this.registry.findSubscriptions(createMessage(destination));
 		assertNotNull(actual);
 		assertEquals(0, actual.size());
+	}
+
+	@Test
+	public void registerSubscriptionWithSelectorNotSupported() {
+		String sessionId = "sess01";
+		String subscriptionId = "subs01";
+		String destination = "/foo";
+		String selector = "headers.foo == 'bar'";
+
+		this.registry.setSelectorHeaderName(null);
+		this.registry.registerSubscription(subscribeMessage(sessionId, subscriptionId, destination, selector));
+
+		SimpMessageHeaderAccessor accessor = SimpMessageHeaderAccessor.create();
+		accessor.setDestination(destination);
+		accessor.setNativeHeader("foo", "bazz");
+		Message<?> message = MessageBuilder.createMessage("", accessor.getMessageHeaders());
+
+		MultiValueMap<String, String> actual = this.registry.findSubscriptions(message);
+		assertNotNull(actual);
+		assertEquals(1, actual.size());
+		assertEquals(Collections.singletonList(subscriptionId), actual.get(sessionId));
 	}
 
 	@Test
@@ -341,6 +366,22 @@ public class DefaultSubscriptionRegistryTests {
 	public void registerSubscriptionWithSelectorRejectingMessagePropertyAccess() throws Exception {
 		// Only "headers" is exposed on the message: no reflective property access
 		assertSelectorDidNotMatch(findSubscriptionsWithSelector("payload != null"));
+	}
+
+	@Test(timeout = 30000)  // CVE-2018-1257
+	public void registerSubscriptionWithSelectorGuardingAgainstFlawedPattern() {
+		String destination = "/foo";
+		String selector = "headers.foo matches '^(?=[a-z0-9-]{1,47})([a-z0-9]+[-]{0,1}){1,47}[a-z0-9]{1}$'";
+
+		this.registry.registerSubscription(subscribeMessage("sess01", "subs01", destination, selector));
+
+		// A header value the above pattern backtracks catastrophically on
+		SimpMessageHeaderAccessor accessor = SimpMessageHeaderAccessor.create();
+		accessor.setDestination(destination);
+		accessor.setNativeHeader("foo", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!");
+		Message<?> message = MessageBuilder.createMessage("", accessor.getMessageHeaders());
+
+		assertSelectorDidNotMatch(this.registry.findSubscriptions(message));
 	}
 
 	private MultiValueMap<String, String> findSubscriptionsWithSelector(String selector) {

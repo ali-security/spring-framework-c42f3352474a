@@ -252,7 +252,10 @@ public enum SpelMessage {
 			"A required selection expression has not been specified"),
 
 	EXCEPTION_RUNNING_COMPILED_EXPRESSION(Kind.ERROR,1072,
-			"An exception occurred whilst evaluating a compiled expression");
+			"An exception occurred whilst evaluating a compiled expression"),
+
+	FLAWED_PATTERN(Kind.ERROR, 1073,
+			"Failed to efficiently evaluate pattern ''{0}'': consider redesigning it");
 
 
 	private final Kind kind;

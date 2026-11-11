@@ -54,6 +54,8 @@ public class SimpleBrokerMessageHandler extends AbstractBrokerMessageHandler {
 
 	private PathMatcher pathMatcher;
 
+	private String selectorHeaderName = "selector";
+
 	private TaskScheduler taskScheduler;
 
 	private long[] heartbeatValue;
@@ -90,6 +92,7 @@ public class SimpleBrokerMessageHandler extends AbstractBrokerMessageHandler {
 		Assert.notNull(subscriptionRegistry, "SubscriptionRegistry must not be null");
 		this.subscriptionRegistry = subscriptionRegistry;
 		initPathMatcherToUse();
+		initSelectorHeaderNameToUse();
 	}
 
 	private void initPathMatcherToUse() {
@@ -102,6 +105,32 @@ public class SimpleBrokerMessageHandler extends AbstractBrokerMessageHandler {
 
 	public SubscriptionRegistry getSubscriptionRegistry() {
 		return this.subscriptionRegistry;
+	}
+
+	/**
+	 * Configure the name of a header that a subscription message can have for
+	 * the purpose of filtering messages matched to the subscription. The header
+	 * value is expected to be a Spring EL boolean expression to be applied to
+	 * the headers of messages matched to the subscription.
+	 * <p>For example:
+	 * <pre>
+	 * headers.foo == 'bar'
+	 * </pre>
+	 * <p>By default this is set to "selector". You can set it to a different
+	 * name, or to {@code null} to turn off support for a selector header.
+	 * @param selectorHeaderName the name to use for a selector header
+	 * @see #setSubscriptionRegistry
+	 * @see DefaultSubscriptionRegistry#setSelectorHeaderName(String)
+	 */
+	public void setSelectorHeaderName(String selectorHeaderName) {
+		this.selectorHeaderName = selectorHeaderName;
+		initSelectorHeaderNameToUse();
+	}
+
+	private void initSelectorHeaderNameToUse() {
+		if (this.subscriptionRegistry instanceof DefaultSubscriptionRegistry) {
+			((DefaultSubscriptionRegistry) this.subscriptionRegistry).setSelectorHeaderName(this.selectorHeaderName);
+		}
 	}
 
 	/**
