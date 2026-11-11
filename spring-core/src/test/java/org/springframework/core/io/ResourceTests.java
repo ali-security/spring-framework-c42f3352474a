@@ -17,11 +17,13 @@
 package org.springframework.core.io;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.HashSet;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.Ignore;
 import org.junit.Test;
@@ -124,6 +126,50 @@ public class ResourceTests {
 		assertEquals(new FileSystemResource(getClass().getResource("Resource.class").getFile()), resource);
 		Resource resource2 = new FileSystemResource("core/io/Resource.class");
 		assertEquals(resource2, new FileSystemResource("core/../core/io/./Resource.class"));
+	}
+
+	@Test
+	public void isReadableChecksExistsFirst() {
+		final AtomicBoolean existsCalled = new AtomicBoolean();
+		final AtomicBoolean canReadCalled = new AtomicBoolean();
+		File file = new File("/dev/my.txt") {
+			@Override
+			public boolean exists() {
+				existsCalled.set(true);
+				return false;
+			}
+			@Override
+			public boolean canRead() {
+				canReadCalled.set(true);
+				return false;
+			}
+		};
+		Resource resource = new FileSystemResource(file);
+		assertFalse(resource.isReadable());
+		assertTrue(existsCalled.get());
+		assertFalse(canReadCalled.get());
+	}
+
+	@Test
+	public void isReadableChecksCanReadAfterExists() {
+		final AtomicBoolean existsCalled = new AtomicBoolean();
+		final AtomicBoolean canReadCalled = new AtomicBoolean();
+		File file = new File("/dev/my.txt") {
+			@Override
+			public boolean exists() {
+				existsCalled.set(true);
+				return true;
+			}
+			@Override
+			public boolean canRead() {
+				canReadCalled.set(true);
+				return false;
+			}
+		};
+		Resource resource = new FileSystemResource(file);
+		assertFalse(resource.isReadable());
+		assertTrue(existsCalled.get());
+		assertTrue(canReadCalled.get());
 	}
 
 	@Test

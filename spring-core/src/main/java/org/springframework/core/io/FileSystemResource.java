@@ -103,7 +103,7 @@ public class FileSystemResource extends AbstractResource implements WritableReso
 	 */
 	@Override
 	public boolean isReadable() {
-		return (this.file.canRead() && !this.file.isDirectory());
+		return (this.file.exists() && this.file.canRead() && !this.file.isDirectory());
 	}
 
 	/**
