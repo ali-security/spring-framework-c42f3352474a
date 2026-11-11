@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -285,6 +285,78 @@ public class DefaultSubscriptionRegistryTests {
 		assertEquals(0, actual.size());
 	}
 
+	@Test
+	public void registerSubscriptionWithSelectorForDestination() throws Exception {
+		String sessionId = "sess01";
+		String subscriptionId = "subs01";
+		String destination = "/foo";
+		String selector = "headers.destination == '/foo'";
+
+		this.registry.registerSubscription(subscribeMessage(sessionId, subscriptionId, destination, selector));
+
+		MultiValueMap<String, String> actual = this.registry.findSubscriptions(createMessage(destination));
+		assertNotNull(actual);
+		assertEquals(1, actual.size());
+		assertEquals(Collections.singletonList(subscriptionId), actual.get(sessionId));
+	}
+
+	@Test  // CVE-2018-1270, CVE-2018-1275
+	public void registerSubscriptionWithSelectorRejectingTypeReference() throws Exception {
+		SelectorExploit.reset();
+
+		// The RCE vector: a "T(java.lang.Runtime).getRuntime().exec(..)" shaped selector
+		MultiValueMap<String, String> actual = findSubscriptionsWithSelector(
+				"T(" + SelectorExploit.class.getName() + ").exploit()");
+
+		assertFalse("Selector expression invoked a static method on an arbitrary type",
+				SelectorExploit.methodInvoked);
+		assertSelectorDidNotMatch(actual);
+	}
+
+	@Test  // CVE-2018-1270, CVE-2018-1275
+	public void registerSubscriptionWithSelectorRejectingConstructorInvocation() throws Exception {
+		SelectorExploit.reset();
+
+		MultiValueMap<String, String> actual = findSubscriptionsWithSelector(
+				"new " + SelectorExploit.class.getName() + "() != null");
+
+		assertFalse("Selector expression invoked an arbitrary constructor",
+				SelectorExploit.constructorInvoked);
+		assertSelectorDidNotMatch(actual);
+	}
+
+	@Test  // CVE-2018-1270, CVE-2018-1275
+	public void registerSubscriptionWithSelectorRejectingMethodInvocation() throws Exception {
+		// Method invocation on objects reachable from the message
+		assertSelectorDidNotMatch(findSubscriptionsWithSelector("headers.toString().length() > 0"));
+		assertSelectorDidNotMatch(findSubscriptionsWithSelector("headers.getClass().getName() != null"));
+	}
+
+	@Test  // CVE-2018-1270, CVE-2018-1275
+	public void registerSubscriptionWithSelectorRejectingBeanReference() throws Exception {
+		assertSelectorDidNotMatch(findSubscriptionsWithSelector("@someBean != null"));
+	}
+
+	@Test  // CVE-2018-1270, CVE-2018-1275
+	public void registerSubscriptionWithSelectorRejectingMessagePropertyAccess() throws Exception {
+		// Only "headers" is exposed on the message: no reflective property access
+		assertSelectorDidNotMatch(findSubscriptionsWithSelector("payload != null"));
+	}
+
+	private MultiValueMap<String, String> findSubscriptionsWithSelector(String selector) {
+		DefaultSubscriptionRegistry registry = new DefaultSubscriptionRegistry();
+		String destination = "/foo";
+
+		registry.registerSubscription(subscribeMessage("sess01", "subs01", destination, selector));
+
+		return registry.findSubscriptions(createMessage(destination));
+	}
+
+	private void assertSelectorDidNotMatch(MultiValueMap<String, String> actual) {
+		assertNotNull(actual);
+		assertEquals("Selector should not have matched: " + actual, 0, actual.size());
+	}
+
 	@Test  // SPR-11931
 	public void registerSubscriptionTwiceAndUnregister() {
 		this.registry.registerSubscription(subscribeMessage("sess01", "subs01", "/foo"));
@@ -466,6 +538,33 @@ public class DefaultSubscriptionRegistryTests {
 	private List<String> sort(List<String> list) {
 		Collections.sort(list);
 		return list;
+	}
+
+
+	/**
+	 * Stands in for the arbitrary code an attacker would reach through a
+	 * selector header, e.g. {@code T(java.lang.Runtime).getRuntime().exec(..)}.
+	 * The static flags record whether SpEL actually managed to run it.
+	 */
+	public static class SelectorExploit {
+
+		public static boolean methodInvoked;
+
+		public static boolean constructorInvoked;
+
+		public SelectorExploit() {
+			constructorInvoked = true;
+		}
+
+		public static boolean exploit() {
+			methodInvoked = true;
+			return true;
+		}
+
+		public static void reset() {
+			methodInvoked = false;
+			constructorInvoked = false;
+		}
 	}
 
 

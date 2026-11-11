@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,9 @@
 
 package org.springframework.messaging.simp.broker;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,15 +28,20 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 
-import org.springframework.expression.AccessException;
+import org.springframework.expression.ConstructorResolver;
 import org.springframework.expression.EvaluationContext;
+import org.springframework.expression.EvaluationException;
 import org.springframework.expression.Expression;
 import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.MethodResolver;
 import org.springframework.expression.PropertyAccessor;
+import org.springframework.expression.TypeLocator;
 import org.springframework.expression.TypedValue;
 import org.springframework.expression.spel.SpelEvaluationException;
+import org.springframework.expression.spel.SpelMessage;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
+import org.springframework.expression.spel.support.StandardTypeConverter;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -63,6 +70,9 @@ public class DefaultSubscriptionRegistry extends AbstractSubscriptionRegistry {
 
 	/** Default maximum number of entries for the destination cache: 1024 */
 	public static final int DEFAULT_CACHE_LIMIT = 1024;
+
+	/** Static evaluation context to reuse */
+	private static final EvaluationContext messageEvalContext = createEvaluationContext();
 
 
 	/** The maximum number of entries in the cache */
@@ -200,10 +210,34 @@ public class DefaultSubscriptionRegistry extends AbstractSubscriptionRegistry {
 		return filterSubscriptions(result, message);
 	}
 
+	/**
+	 * Create the {@link EvaluationContext} to use for evaluating selector
+	 * expressions against a message.
+	 * <p>The context is deliberately restricted: the only supported operation is
+	 * read access to message headers via {@link SimpMessageHeaderPropertyAccessor}
+	 * while type references, constructor invocations, method invocations, and
+	 * bean references are all disabled.
+	 */
+	private static EvaluationContext createEvaluationContext() {
+		StandardEvaluationContext context = new StandardEvaluationContext();
+		context.setPropertyAccessors(new ArrayList<PropertyAccessor>(
+				Collections.singletonList(new SimpMessageHeaderPropertyAccessor())));
+		context.setMethodResolvers(new ArrayList<MethodResolver>());
+		context.setConstructorResolvers(new ArrayList<ConstructorResolver>());
+		context.setBeanResolver(null);
+		context.setTypeConverter(new StandardTypeConverter());
+		context.setTypeLocator(new TypeLocator() {
+			@Override
+			public Class<?> findType(String typeName) throws EvaluationException {
+				throw new SpelEvaluationException(SpelMessage.TYPE_NOT_FOUND, typeName);
+			}
+		});
+		return context;
+	}
+
 	private MultiValueMap<String, String> filterSubscriptions(MultiValueMap<String, String> allMatches,
 			Message<?> message) {
 
-		EvaluationContext context = null;
 		MultiValueMap<String, String> result = new LinkedMultiValueMap<String, String>(allMatches.size());
 		for (String sessionId : allMatches.keySet()) {
 			for (String subId : allMatches.get(sessionId)) {
@@ -220,12 +254,8 @@ public class DefaultSubscriptionRegistry extends AbstractSubscriptionRegistry {
 					result.add(sessionId, subId);
 					continue;
 				}
-				if (context == null) {
-					context = new StandardEvaluationContext(message);
-					context.getPropertyAccessors().add(new SimpMessageHeaderPropertyAccessor());
-				}
 				try {
-					if (expression.getValue(context, boolean.class)) {
+					if (Boolean.TRUE.equals(expression.getValue(messageEvalContext, message, Boolean.class))) {
 						result.add(sessionId, subId);
 					}
 				}
@@ -504,7 +534,7 @@ public class DefaultSubscriptionRegistry extends AbstractSubscriptionRegistry {
 
 		@Override
 		public Class<?>[] getSpecificTargetClasses() {
-			return new Class<?>[] {MessageHeaders.class};
+			return new Class<?>[] {Message.class, MessageHeaders.class};
 		}
 
 		@Override
@@ -513,19 +543,29 @@ public class DefaultSubscriptionRegistry extends AbstractSubscriptionRegistry {
 		}
 
 		@Override
-		public TypedValue read(EvaluationContext context, Object target, String name) throws AccessException {
-			MessageHeaders headers = (MessageHeaders) target;
-			SimpMessageHeaderAccessor accessor =
-					MessageHeaderAccessor.getAccessor(headers, SimpMessageHeaderAccessor.class);
+		public TypedValue read(EvaluationContext context, Object target, String name) {
 			Object value;
-			if ("destination".equalsIgnoreCase(name)) {
-				value = accessor.getDestination();
+			if (target instanceof Message<?>) {
+				value = name.equals("headers") ? ((Message<?>) target).getHeaders() : null;
+			}
+			else if (target instanceof MessageHeaders) {
+				MessageHeaders headers = (MessageHeaders) target;
+				SimpMessageHeaderAccessor accessor =
+						MessageHeaderAccessor.getAccessor(headers, SimpMessageHeaderAccessor.class);
+				Assert.state(accessor != null, "No SimpMessageHeaderAccessor");
+				if ("destination".equalsIgnoreCase(name)) {
+					value = accessor.getDestination();
+				}
+				else {
+					value = accessor.getFirstNativeHeader(name);
+					if (value == null) {
+						value = headers.get(name);
+					}
+				}
 			}
 			else {
-				value = accessor.getFirstNativeHeader(name);
-				if (value == null) {
-					value = headers.get(name);
-				}
+				// Should never happen...
+				throw new IllegalStateException("Expected Message or MessageHeaders.");
 			}
 			return new TypedValue(value);
 		}
