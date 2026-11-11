@@ -659,4 +659,88 @@ public class AntPathMatcherTests {
 				"/*.html.hotel.*", pathMatcher.combine("/*.html", "hotel.*"));
 	}
 
+
+	/**
+	 * A URI template variable whose custom regex is prone to catastrophic
+	 * backtracking, e.g. {@code (?:a+)+}, combined with a long input that cannot
+	 * match, makes the regex engine explore an exponential number of paths.
+	 */
+	private static final String EVIL_PATTERN = "/{var:(?:a+)+}";
+
+	private static String evilPath(int length) {
+		StringBuilder sb = new StringBuilder(length + 2);
+		sb.append('/');
+		for (int i = 0; i < length; i++) {
+			sb.append('a');
+		}
+		// Force the overall match to fail, triggering the backtracking explosion.
+		sb.append('X');
+		return sb.toString();
+	}
+
+	@Test(timeout = 30000)  // CVE-2026-41848
+	public void matchWithCatastrophicBacktrackingPattern() {
+		String path = evilPath(60);
+		try {
+			assertFalse(pathMatcher.match(EVIL_PATTERN, path));
+		}
+		catch (IllegalStateException ex) {
+			assertThat(ex.getMessage(), containsString("Too many character access attempts"));
+		}
+	}
+
+	@Test(timeout = 30000)  // CVE-2026-41848
+	public void matchStartWithCatastrophicBacktrackingPattern() {
+		String path = evilPath(60);
+		try {
+			assertFalse(pathMatcher.matchStart(EVIL_PATTERN, path));
+		}
+		catch (IllegalStateException ex) {
+			assertThat(ex.getMessage(), containsString("Too many character access attempts"));
+		}
+	}
+
+	@Test(timeout = 30000)  // CVE-2026-41848
+	public void extractUriTemplateVariablesWithCatastrophicBacktrackingPattern() {
+		String path = evilPath(60);
+		try {
+			pathMatcher.extractUriTemplateVariables(EVIL_PATTERN, path);
+			fail("Expected IllegalStateException");
+		}
+		catch (IllegalStateException ex) {
+			assertThat(ex.getMessage(),
+					anyOf(containsString("Too many character access attempts"), containsString("is not a match for")));
+		}
+	}
+
+	@Test(timeout = 30000)  // CVE-2026-41848
+	public void catastrophicBacktrackingPatternIsBoundedByMaxCharacterAccessAttempts() {
+		// Long enough that the guard is guaranteed to trip before the match completes.
+		String path = evilPath(1000);
+		try {
+			pathMatcher.match(EVIL_PATTERN, path);
+			fail("Expected IllegalStateException for too many character access attempts");
+		}
+		catch (IllegalStateException ex) {
+			assertThat(ex.getMessage(), containsString("Too many character access attempts"));
+		}
+	}
+
+	@Test(timeout = 30000)  // CVE-2026-41848
+	public void legitimateMatchingIsUnaffectedByMaxCharacterAccessAttempts() {
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < 5000; i++) {
+			sb.append('a');
+		}
+		String value = sb.toString();
+
+		assertTrue(pathMatcher.match("/{var:a+}/end", "/" + value + "/end"));
+		assertEquals(value, pathMatcher.extractUriTemplateVariables("/{var:a+}/end", "/" + value + "/end").get("var"));
+		assertTrue(pathMatcher.matchStart("/{var:a+}/end", "/" + value));
+
+		// Plain Ant-style patterns over a long path
+		assertTrue(pathMatcher.match("/*/end", "/" + value + "/end"));
+		assertEquals(value, pathMatcher.extractUriTemplateVariables("/{var}/end", "/" + value + "/end").get("var"));
+	}
+
 }
