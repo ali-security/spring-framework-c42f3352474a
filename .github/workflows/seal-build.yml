@@ -1,0 +1,143 @@
+name: seal-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: "Gradle test task + selector, e.g. ':spring-core:test --tests org.springframework.util.AntPathMatcherTests'; empty runs the full :spring-core test suite"
+        required: false
+        default: ""
+
+jobs:
+  spring-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GRADLE_OPTS: "-Xmx2g -XX:MaxPermSize=512m"
+      GRADLE_ARGS: "--no-daemon --console=plain --stacktrace -I ${{ github.workspace }}/../seal-test-logging.gradle"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+
+      - name: Write Gradle test-logging init script
+        shell: bash
+        run: |
+          cat > "${{ github.workspace }}/../seal-test-logging.gradle" <<'EOF'
+          allprojects {
+            tasks.withType(Test) {
+              testLogging {
+                events "failed", "skipped"
+                exceptionFormat "full"
+              }
+              afterSuite { desc, result ->
+                if (desc.className != null) {
+                  println "TEST SUITE ${desc.className}: ${result.testCount} tests, ${result.successfulTestCount} passed, ${result.failedTestCount} failed, ${result.skippedTestCount} skipped"
+                }
+                if (desc.parent == null) {
+                  println "TEST TOTALS (${project.path}): ${result.testCount} tests, ${result.successfulTestCount} passed, ${result.failedTestCount} failed, ${result.skippedTestCount} skipped -> ${result.resultType}"
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Test
+        shell: bash
+        run: |
+          java -version
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            ./gradlew ${{ inputs.test-filter }} $GRADLE_ARGS
+          else
+            ./gradlew :spring-core:test $GRADLE_ARGS
+          fi
+
+      - name: Test results summary and skipped-test reasons
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          python3 - <<'EOF' | tee "${{ github.workspace }}/../seal-test-summary.txt"
+          import glob, os, re, sys
+          import xml.etree.ElementTree as ET
+
+          src_root = "spring-core/src/test/java"
+          sources = {}
+          for path in glob.glob(src_root + "/**/*.java", recursive=True):
+              sources[os.path.splitext(os.path.basename(path))[0]] = open(path, encoding="utf-8").read()
+
+          def method_reason(cls_simple, method, seen=None):
+              seen = seen or set()
+              if cls_simple in seen or cls_simple not in sources:
+                  return None
+              seen.add(cls_simple)
+              text = sources[cls_simple]
+              lines = text.splitlines()
+              for i, line in enumerate(lines):
+                  if re.search(r"\bvoid\s+" + re.escape(method) + r"\s*\(", line):
+                      for back in range(max(0, i - 4), i + 1):
+                          m = re.search(r"@Ignore(\(\s*\"([^\"]*)\"\s*\))?", lines[back])
+                          if m:
+                              return "@Ignore" + (": " + m.group(2) if m.group(2) else (" (" + lines[back].strip() + ")"))
+                      for fwd in range(i, min(len(lines), i + 25)):
+                          m = re.search(r"(Assume\.group\([^)]*\)|Assume\.assume\w+\(.*\)|assume\w+\(.*\))", lines[fwd])
+                          if m:
+                              return "assumption not met: " + m.group(1).strip()
+                      break
+              m = re.search(r"@Ignore[^\n]*\n(?:\s*@\w+[^\n]*\n)*\s*(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+" + re.escape(cls_simple) + r"\b", text)
+              if m:
+                  return "class-level " + m.group(0).splitlines()[0].strip()
+              ext = re.search(r"class\s+" + re.escape(cls_simple) + r"\b[^{]*?\bextends\s+(\w+)", text)
+              if ext:
+                  r = method_reason(ext.group(1), method, seen)
+                  if r:
+                      return r + " (inherited from " + ext.group(1) + ")"
+              # assumption in a @Before / setUp of the class hierarchy
+              for line in lines:
+                  m = re.search(r"(Assume\.group\([^)]*\)|Assume\.assume\w+\(.*\))", line)
+                  if m:
+                      return "assumption not met in fixture: " + m.group(1).strip()
+              return None
+
+          totals = dict(suites=0, tests=0, failures=0, errors=0, skipped=0)
+          skipped = []
+          files = glob.glob("**/build/test-results/**/TEST-*.xml", recursive=True)
+          for f in sorted(files):
+              root = ET.parse(f).getroot()
+              totals["suites"] += 1
+              for k in ("tests", "failures", "errors", "skipped"):
+                  totals[k] += int(root.get(k, 0))
+              for tc in root.iter("testcase"):
+                  if tc.find("skipped") is not None:
+                      skipped.append((tc.get("classname"), tc.get("name")))
+          for cls, name in skipped:
+              simple = cls.split(".")[-1].split("$")[0]
+              reason = method_reason(simple, name) or "no annotation found in source"
+              print(f"TEST SKIPPED: {cls}.{name} -- reason: {reason}")
+          passed = totals["tests"] - totals["failures"] - totals["errors"] - totals["skipped"]
+          print("JUNIT SUMMARY: suites={suites} tests={tests} failures={failures} errors={errors} skipped={skipped}".format(**totals) + f" passed={passed}")
+          if not files or totals["failures"] or totals["errors"]:
+              print("TEST RESULT: FAILED (no results or failures/errors present)")
+              sys.exit(1)
+          print("TEST RESULT: ALL EXECUTED TESTS PASSED")
+          EOF
+
+      - name: Build jar
+        shell: bash
+        run: |
+          ./gradlew :spring-core:jar $GRADLE_ARGS
+          ls -l spring-core/build/libs/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spring-core-jar
+          path: spring-core/build/libs/spring-core-4.2.0.RELEASE.jar
+          if-no-files-found: error
+
+      - name: Final summary
+        shell: bash
+        run: |
+          grep -E "^(JUNIT SUMMARY|TEST RESULT)" "${{ github.workspace }}/../seal-test-summary.txt"
+          echo "===== :spring-core:test PASSED, spring-core-4.2.0.RELEASE.jar BUILT ====="
