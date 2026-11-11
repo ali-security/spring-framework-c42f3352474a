@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -89,6 +89,31 @@ public class HttpRangeTests {
 		assertEquals(999, ranges.get(1).getRangeEnd(1000));
 		assertEquals(999, ranges.get(2).getRangeStart(1000));
 		assertEquals(999, ranges.get(2).getRangeEnd(1000));
+	}
+
+	@Test
+	public void parseRangesValidations() throws Exception {
+
+		// 1. At limit..
+		StringBuilder sb = new StringBuilder("bytes=0-0");
+		for (int i=0; i < 99; i++) {
+			sb.append(",").append(i).append("-").append(i + 1);
+		}
+		List<HttpRange> ranges = HttpRange.parseRanges(sb.toString());
+		assertEquals(100, ranges.size());
+
+		// 2. Above limit..
+		sb = new StringBuilder("bytes=0-0");
+		for (int i=0; i < 100; i++) {
+			sb.append(",").append(i).append("-").append(i + 1);
+		}
+		try {
+			HttpRange.parseRanges(sb.toString());
+			fail();
+		}
+		catch (IllegalArgumentException ex) {
+			// Expected
+		}
 	}
 
 	@Test

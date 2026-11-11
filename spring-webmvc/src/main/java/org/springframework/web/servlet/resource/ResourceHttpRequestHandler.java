@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -476,6 +476,7 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 		try {
 			HttpHeaders headers = new ServletServerHttpRequest(request).getHeaders();
 			ranges = headers.getRange();
+			assertRangesWithinLength(ranges, length);
 		}
 		catch (IllegalArgumentException ex) {
 			response.addHeader("Content-Range", "bytes */" + length);
@@ -535,6 +536,27 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 			}
 			out.println();
             out.print("--" + boundaryString + "--");
+		}
+	}
+
+	/**
+	 * Check that the requested ranges, when applied to a resource of the given
+	 * length, do not select more content than the resource itself holds. Wide
+	 * and overlapping ranges would otherwise allow a client to amplify the size
+	 * of the response with a single request.
+	 * @param ranges the ranges to check
+	 * @param length the length of the resource the ranges apply to
+	 * @throws IllegalArgumentException if the sum of all ranges exceeds the
+	 * resource length.
+	 */
+	private void assertRangesWithinLength(List<HttpRange> ranges, long length) {
+		if (ranges.size() > 1) {
+			long total = 0;
+			for (HttpRange range : ranges) {
+				total += (range.getRangeEnd(length) - range.getRangeStart(length) + 1);
+			}
+			Assert.isTrue(total < length, "The sum of all ranges (" + total + ") " +
+					"should be less than the resource length (" + length + ")");
 		}
 	}
 

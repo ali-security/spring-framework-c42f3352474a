@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,6 +37,9 @@ import org.springframework.util.StringUtils;
  * @see HttpHeaders#getRange()
  */
 public abstract class HttpRange {
+
+	/** Maximum ranges per request. */
+	private static final int MAX_RANGES = 100;
 
 	private static final String BYTE_RANGE_PREFIX = "bytes=";
 
@@ -92,7 +95,8 @@ public abstract class HttpRange {
 	 * <p>This method can be used to parse an {@code Range} header.
 	 * @param ranges the string to parse
 	 * @return the list of ranges
-	 * @throws IllegalArgumentException if the string cannot be parsed
+	 * @throws IllegalArgumentException if the string cannot be parsed, or if
+	 * the number of ranges is greater than 100.
 	 */
 	public static List<HttpRange> parseRanges(String ranges) {
 		if (!StringUtils.hasLength(ranges)) {
@@ -104,6 +108,7 @@ public abstract class HttpRange {
 		ranges = ranges.substring(BYTE_RANGE_PREFIX.length());
 
 		String[] tokens = ranges.split(",\\s*");
+		Assert.isTrue(tokens.length <= MAX_RANGES, "Too many ranges " + tokens.length);
 		List<HttpRange> result = new ArrayList<HttpRange>(tokens.length);
 		for (String token : tokens) {
 			result.add(parseRange(token));

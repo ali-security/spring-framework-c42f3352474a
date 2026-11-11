@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -447,6 +447,35 @@ public class ResourceHttpRequestHandlerTests {
 		assertEquals("Content-Type: text/plain", ranges[9]);
 		assertEquals("Content-Range: bytes 8-9/10", ranges[10]);
 		assertEquals("t.", ranges[11]);
+	}
+
+	// SPR-17318
+	@Test
+	public void partialContentTooManyRanges() throws Exception {
+		StringBuilder rangeHeader = new StringBuilder("bytes=0-0");
+		for (int i = 0; i < 100; i++) {
+			rangeHeader.append(",").append(i).append("-").append(i + 1);
+		}
+		this.request.addHeader("Range", rangeHeader.toString());
+		this.request.setAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE, "foo.txt");
+		this.handler.handleRequest(this.request, this.response);
+
+		assertEquals(416, this.response.getStatus());
+		assertEquals("bytes */10", this.response.getHeader("Content-Range"));
+		assertEquals(0, this.response.getContentAsByteArray().length);
+	}
+
+	// SPR-17318
+	@Test
+	public void partialContentOverlappingRanges() throws Exception {
+		// Ten wide, overlapping ranges over a 10 byte resource would write 100 bytes
+		this.request.addHeader("Range", "bytes=0-9,0-9,0-9,0-9,0-9,0-9,0-9,0-9,0-9,0-9");
+		this.request.setAttribute(HandlerMapping.PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE, "foo.txt");
+		this.handler.handleRequest(this.request, this.response);
+
+		assertEquals(416, this.response.getStatus());
+		assertEquals("bytes */10", this.response.getHeader("Content-Range"));
+		assertEquals(0, this.response.getContentAsByteArray().length);
 	}
 
 	// SPR-12999
