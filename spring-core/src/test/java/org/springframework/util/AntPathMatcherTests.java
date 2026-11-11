@@ -133,6 +133,27 @@ public class AntPathMatcherTests {
 		assertTrue(pathMatcher.match("/{bla}.*", "/testing.html"));
 	}
 
+	// SPR-14247
+	@Test
+	public void matchWithTrimTokensEnabled() throws Exception {
+		pathMatcher.setTrimTokens(true);
+
+		assertTrue(pathMatcher.match("/foo/bar", "/foo /bar"));
+	}
+
+	// SPR-14247 / CVE-2016-5007: tokens must not be trimmed by default, so that
+	// path matching stays consistent with Spring Security's URL pattern matching
+	// and a padded request path cannot slip past a secured mapping.
+	@Test
+	public void matchWithTrimTokensDisabledByDefault() throws Exception {
+		assertFalse(pathMatcher.match("/foo/bar", "/foo /bar"));
+		assertFalse(pathMatcher.match("/foo/bar", "/foo/ bar"));
+		assertFalse(pathMatcher.match("/foo/bar", "/foo/bar "));
+		assertFalse(pathMatcher.match("/admin/users", "/admin /users"));
+		assertFalse(pathMatcher.matchStart("/admin/users", "/admin /users"));
+		assertTrue(pathMatcher.match("/foo/bar", "/foo/bar"));
+	}
+
 	@Test
 	public void withMatchStart() {
 		// test exact matching

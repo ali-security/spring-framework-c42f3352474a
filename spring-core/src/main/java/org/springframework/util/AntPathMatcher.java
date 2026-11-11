@@ -81,7 +81,7 @@ public class AntPathMatcher implements PathMatcher {
 
 	private boolean caseSensitive = true;
 
-	private boolean trimTokens = true;
+	private boolean trimTokens = false;
 
 	private volatile Boolean cachePatterns;
 
